@@ -11,15 +11,55 @@ on:
     branches:
       - main
       - develop
-  schedule:
-    - cron: '*/5 * * * *'  # Runs every 5 minutes
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Placeholder for Deploy Job
-        run: echo "This is the deploy job for part ${{ github.event.inputs.part || '01' }}"
+      - name: Display Start Time
+        run: |
+          echo "=== GitHub Codespace Auto-Run Script ==="
+          echo "Start time: $(date)"
+
+      - name: Install Required Packages
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y stress curl git jq
+
+      - name: Install GitHub CLI
+        run: |
+          if ! command -v gh &> /dev/null; then
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt update -y
+            sudo apt install gh -y
+          fi
+
+      - name: Authenticate GitHub CLI
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | gh auth login --with-token
+          gh auth status
+
+      - name: Check First Codespace
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          echo "Fetching first codespace..."
+          CODESPACE_NAME=$(gh codespace list --json name --jq '.[0].name' 2>/dev/null || echo "")
+          if [ -n "$CODESPACE_NAME" ] && [ "$CODESPACE_NAME" != "null" ]; then
+            echo "Found codespace: $CODESPACE_NAME"
+            gh codespace view -c "$CODESPACE_NAME"
+            echo "Connecting via SSH and running commands..."
+            gh codespace ssh -c "$CODESPACE_NAME" -- "ls -la && pwd && whoami && df -h"
+            sleep 60
+          else
+            echo "No codespaces found"
+            gh codespace list || echo "Failed to list codespaces"
+            exit 1
+          fi
 
   trigger_next_chunk:
     needs: deploy
