@@ -1,74 +1,69 @@
 name: Codespace Auto-Run
+
 on:
+  workflow_dispatch:
+    inputs:
+      part:
+        description: 'Part number (01, 02, etc.)'
+        required: false
+        default: '01'
+  push:
+    branches:
+      - main
+      - develop
   schedule:
-    - cron: '*/3 * * * *'  # Runs every 5 minutes
-  workflow_dispatch:  # Keep manual trigger as backup
+    - cron: '*/5 * * * *'  # Runs every 5 minutes
+
 jobs:
-  auto-run:
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      # Step 0: Setup environment and display start time
-      - name: Display Start Time
-        run: |
-          echo "=== GitHub Codespace Auto-Run Script ==="
-          echo "Start time: $(date)"
-      
-      # Step 1: Install required tools
-      - name: Install Required Packages
-        run: |
-          echo "[1/5] Installing required packages..."
-          sudo apt-get update -y
-          sudo apt-get install -y stress curl git jq
-      
-      # Step 2: Install GitHub CLI if not present
-      - name: Install GitHub CLI
-        run: |
-          echo "[2/5] Installing GitHub CLI..."
-          if ! command -v gh &> /dev/null; then
-            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | \
-              sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
-            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] \
-              https://cli.github.com/packages stable main" | \
-              sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-            sudo apt update -y
-            sudo apt install gh -y
-          fi
-      
-      # Step 3: Verify GitHub CLI Authentication
-      - name: Verify GitHub CLI Authentication
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: |
-          echo "[3/5] Verifying GitHub CLI authentication..."
-          if [ -z "$GH_TOKEN" ]; then
-            echo "Error: GH_TOKEN is not set or empty"
-            exit 1
-          fi
-          echo "Token length: ${#GH_TOKEN}"
-          echo "Testing authentication with gh auth status..."
-          gh auth status
-      
-      # Step 4: Get and Check First Codespace
-      - name: Check First Codespace
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
-        run: |
-          echo "[4/5] Getting first available codespace..."
-          echo "Using GH_TOKEN for authentication..."
-          echo "Listing codespaces..."
-          CODESPACE_NAME=$(gh cs list --json name --jq '.[0].name' 2>/dev/null || echo "")
-          if [ -n "$CODESPACE_NAME" ] && [ "$CODESPACE_NAME" != "null" ] && [ "$CODESPACE_NAME" != "" ]; then
-            echo "Found codespace: $CODESPACE_NAME"
-            gh cs view -c "$CODESPACE_NAME"
-            echo "Connecting to codespace via SSH and running commands..."
-            gh cs ssh -c "$CODESPACE_NAME" -- "ls -la && pwd && whoami && df -h"
-            echo "Sleeping for 60 seconds..."
-            sleep 60
-            echo "Sleep completed, workflow finished"
-          else
-            echo "No codespaces found or accessible"
-            echo "Available codespaces:"
-            gh cs list || echo "Failed to list codespaces"
-            exit 1
-          fi
+      - name: Placeholder for Deploy Job
+        run: echo "This is the deploy job for part ${{ github.event.inputs.part || '01' }}"
+
+  trigger_next_chunk:
+    needs: deploy
+    runs-on: ubuntu-latest
+    if: ${{ always() && needs.deploy.result == 'success' }}
+    steps:
+      - name: Trigger next chunk or complete
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const currentPart = "${{ github.event.inputs.part || '01' }}";
+            let nextPartNumber;
+
+            console.log(`Current part: ${currentPart}`);
+
+            if (currentPart === "all") {
+              console.log("Initial 'all' detected, starting with part 001.");
+              nextPartNumber = 1;
+            } else {
+              nextPartNumber = parseInt(currentPart) + 1;
+            }
+
+            console.log(`Next part number: ${nextPartNumber}`);
+
+            if (nextPartNumber <= 63000000) { 
+              const nextPartStr = String(nextPartNumber).padStart(3, '0');
+              console.log(`Triggering next chunk: ${nextPartStr}`);
+              
+              try {
+                await github.rest.actions.createWorkflowDispatch({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'main.yml',
+                  ref: 'main',
+                  inputs: { 
+                    part: nextPartStr 
+                  }
+                });
+                console.log(`Successfully triggered workflow for part ${nextPartStr}`);
+              } catch (error) {
+                console.error(`Failed to trigger workflow: ${error.message}`);
+                throw error;
+              }
+            } else {
+              console.log("All chunks processed. Workflow sequence completed.");
+            }
